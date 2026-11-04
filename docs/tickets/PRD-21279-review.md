@@ -58,4 +58,45 @@ test fixture's fake secret `s3cr3t-value`).
 
 ### Fixes
 
-_(none yet — this is the first review round)_
+Round 1, must-fix 1 (`src/yeastar_mcp/api_client.py:82-87` retry/mapping) — fixed in `bae87ff`:
+
+- `_request()` now runs in a bounded retry loop for HTTP `429` and `>= 500` responses: up to
+  `MAX_RETRY_ATTEMPTS = 3` retries (4 attempts total, worst case), exponential backoff starting at
+  `INITIAL_BACKOFF_SECONDS = 1.0` doubling each attempt (`BACKOFF_MULTIPLIER = 2.0`), honoring a numeric
+  `Retry-After` response header when present (falls back to the exponential value for non-numeric headers
+  such as an HTTP-date, since the vendor's exact format isn't documented). Total wall time across the
+  initial attempt and all retries is capped at `MAX_TOTAL_WALL_TIME = 120.0` seconds per the SOP §14
+  checklist line: before each sleep the remaining budget is computed from a `time.monotonic()` start
+  mark, the sleep is clamped to that remaining budget, and once the budget is exhausted the loop stops
+  retrying and raises immediately instead of sleeping past the 120s ceiling.
+- Once retries are exhausted (or the budget runs out), a terminal `429` now raises
+  `YeastarApiError(code="rate_limited", retryable=True)` instead of falling into the generic
+  `upstream_error` branch — matching the SOP §4.2 vocabulary table exactly. A terminal `>= 500` still
+  raises `upstream_error` with `retryable=True` (unchanged mapping, now reached only after retries are
+  exhausted instead of on the first response). Other 4xx responses are still not retried and still raise
+  `upstream_error`; `retryable` for that branch is now written as the literal `False` instead of the old
+  `status_code >= 500` expression — same value, clearer that it's a deliberate "don't retry" result rather
+  than leftover arithmetic from the 5xx branch above it.
+- Retry attempt counts/backoff values are not configurable via environment — the vendor's actual rate-limit
+  behavior isn't known yet (no real appliance account was available for this round either), so the
+  constants were chosen to satisfy the SOP floor (bounded, exponential, Retry-After-aware, < 120s total)
+  rather than tuned against observed vendor behavior. Noting this so whoever gets appliance access can
+  revisit the constants if real `429`/`Retry-After` behavior turns out to need something different.
+- Tests: new `tests/test_api_client.py` (6 cases, all respx-mocked, no real PBX) covering: `429` retried
+  then succeeds; `429` exhausted maps to `rate_limited`/`retryable=True` after exactly
+  `1 + MAX_RETRY_ATTEMPTS` attempts; `503` retried then succeeds; `5xx` exhausted maps to
+  `upstream_error`/`retryable=True`; a numeric `Retry-After` header is honored over the default backoff
+  value; a plain `404` is not retried and maps to `upstream_error`/`retryable=False`. `asyncio.sleep` is
+  monkeypatched to a no-op so the suite doesn't actually wait out the backoff delays.
+- Re-ran gates on the fixed code: `uv run pytest -q` → `23 passed` (17 pre-existing + 6 new); `uv run mypy
+  src` → `Success: no issues found in 11 source files`. Also re-ran the manual smoke check from round 1
+  (`uv run python -m yeastar_mcp`, `curl` with placeholder headers): `/health` → `200`; `tools/list` with no
+  headers → `401` with the missing-header list; `tools/list` with placeholder headers → `200` with the
+  same 6 read-only tools as round 1. CJK scan (`grep -rnP '[\x{4e00}-\x{9fff}]' src tests`) → no output —
+  the first draft of this fix's own code comments quoted the SOP in Chinese and had to be rewritten in
+  English before this round was done; caught by re-running the scan, not by writing it correctly the
+  first time.
+- Round 1's two "Suggestions" items (dropped `sort_by`/`order_by` params on two tools; `get_token` raising
+  `KeyError` on a malformed success body) are unchanged — they were marked non-blocking in round 1 and are
+  not part of this round's must-fix list, so per the review-rework rule only the must-fix item above was
+  addressed.
