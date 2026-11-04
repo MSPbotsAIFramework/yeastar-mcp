@@ -14,7 +14,9 @@ handling from ever being able to leak into another tenant's request.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,6 +26,26 @@ logger = logging.getLogger("yeastar_mcp.api_client")
 
 CONNECT_TIMEOUT = 5.0
 READ_TIMEOUT = 30.0
+
+# SOP §5 "Network robustness" (mandatory): bounded retry + exponential backoff on
+# 429/5xx, honoring Retry-After, with the whole call (including retries) staying
+# under 120s.
+MAX_RETRY_ATTEMPTS = 3  # retries beyond the initial attempt (4 attempts total, worst case)
+MAX_TOTAL_WALL_TIME = 120.0  # seconds, matches the SOP §14 checklist line item
+INITIAL_BACKOFF_SECONDS = 1.0
+BACKOFF_MULTIPLIER = 2.0
+
+
+def _retry_delay(response: httpx.Response, attempt: int) -> float:
+    """Delay before retry `attempt` (0-indexed). Honors a numeric `Retry-After`
+    (seconds) if the PBX sends one; otherwise exponential backoff."""
+    retry_after = response.headers.get("Retry-After")
+    if retry_after is not None:
+        try:
+            return max(0.0, float(retry_after))
+        except ValueError:
+            pass  # not a plain seconds value (e.g. an HTTP-date) -- fall back to backoff
+    return INITIAL_BACKOFF_SECONDS * (BACKOFF_MULTIPLIER**attempt)
 
 # Yeastar errcode -> (mcp error code, retryable). Codes not in this table
 # fall back to the ("upstream_error", True) default in _map_errcode.
@@ -72,19 +94,44 @@ class YeastarClient:
         return f"{self._credentials.base_url.rstrip('/')}/openapi/v1.0/{path}"
 
     async def _request(self, client: httpx.AsyncClient, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
-        try:
-            response = await client.request(method, self._url(path), **kwargs)
-        except httpx.TimeoutException as exc:
-            raise YeastarApiError(code="upstream_error", message=f"Timed out calling the PBX: {exc}", retryable=True) from exc
-        except httpx.TransportError as exc:
-            raise YeastarApiError(code="upstream_error", message=f"Could not reach the PBX: {exc}", retryable=True) from exc
+        start = time.monotonic()
+        attempt = 0
+        while True:
+            try:
+                response = await client.request(method, self._url(path), **kwargs)
+            except httpx.TimeoutException as exc:
+                raise YeastarApiError(code="upstream_error", message=f"Timed out calling the PBX: {exc}", retryable=True) from exc
+            except httpx.TransportError as exc:
+                raise YeastarApiError(code="upstream_error", message=f"Could not reach the PBX: {exc}", retryable=True) from exc
 
-        if response.status_code >= 400:
-            raise YeastarApiError(
-                code="upstream_error",
-                message=f"PBX returned HTTP {response.status_code}",
-                retryable=response.status_code >= 500,
-            )
+            if response.status_code == 429 or response.status_code >= 500:
+                remaining_budget = MAX_TOTAL_WALL_TIME - (time.monotonic() - start)
+                if attempt < MAX_RETRY_ATTEMPTS and remaining_budget > 0:
+                    await asyncio.sleep(min(_retry_delay(response, attempt), remaining_budget))
+                    attempt += 1
+                    continue
+                # Retries exhausted (or no wall-time budget left): report the
+                # final response using the fixed error vocabulary (SOP §4.2).
+                if response.status_code == 429:
+                    raise YeastarApiError(
+                        code="rate_limited",
+                        message=f"PBX returned HTTP 429 (rate limited) after {attempt} retry/retries",
+                        retryable=True,
+                    )
+                raise YeastarApiError(
+                    code="upstream_error",
+                    message=f"PBX returned HTTP {response.status_code} after {attempt} retry/retries",
+                    retryable=True,
+                )
+
+            if response.status_code >= 400:
+                # Other 4xx are not retried per SOP §5 ("no retry for other 4xx").
+                raise YeastarApiError(
+                    code="upstream_error",
+                    message=f"PBX returned HTTP {response.status_code}",
+                    retryable=False,
+                )
+            break
 
         try:
             body = response.json()
