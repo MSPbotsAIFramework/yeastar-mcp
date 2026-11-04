@@ -65,8 +65,8 @@
       "Read the `description` field of yeastar_list_cdr"
     ],
     "expect": "Description text explicitly says there is no start/end time filter and recommends paging through time-sorted (desc) results to narrow a window",
-    "result": "untested",
-    "evidence": ""
+    "result": "pass",
+    "evidence": "Live tools/list call (2026-11-04, local server + placeholder headers) returned for yeastar_list_cdr: description = \"List call detail records (CDR) from this PBX, newest first by default. The PBX has no server-side time-range filter: to look at a specific window, page through these time-sorted results and stop once the `time` field falls outside the window you care about.\" -- matches expect."
   },
   {
     "id": "TC-YST-010",
@@ -80,7 +80,7 @@
     "ac": "AC6",
     "text": "Given a request missing all three required headers, When any tool is called, Then the server returns 401 and the body names all three",
     "type": "auto",
-    "tests": ["tests/test_middleware.py::test_missing_all_headers_returns_401_naming_all"]
+    "tests": ["tests/test_middleware.py::test_missing_all_three_headers_returns_401_naming_it"]
   },
   {
     "id": "TC-YST-012",
