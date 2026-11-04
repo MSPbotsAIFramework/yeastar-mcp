@@ -1,0 +1,148 @@
+[
+  {
+    "id": "TC-YST-001",
+    "ac": "AC1",
+    "text": "Given valid connector credentials in headers, When tools/list is called, Then the server returns exactly the 6 named tools, each readOnlyHint: true",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_tools_list_returns_six_read_only_tools"]
+  },
+  {
+    "id": "TC-YST-002",
+    "ac": "AC2",
+    "text": "Given 60 mocked upstream extension records, When yeastar_list_extensions() is called with default limit, Then it returns 50 items and has_more: true",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_list_extensions_paginates_with_has_more"]
+  },
+  {
+    "id": "TC-YST-003",
+    "ac": "AC2",
+    "text": "Given a PBX with 0 extensions configured, When yeastar_list_extensions() is called, Then it returns items: [] and has_more: false, not a not_found error",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_list_extensions_empty_is_not_an_error"]
+  },
+  {
+    "id": "TC-YST-004",
+    "ac": "AC3",
+    "text": "Given one mocked peer-type trunk and one mocked account-type trunk, When yeastar_list_trunks() is called, Then peer fields (host_port, def_outbound_cid) and account fields (username) are both mapped correctly",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_list_trunks_maps_peer_and_account_fields"]
+  },
+  {
+    "id": "TC-YST-005",
+    "ac": "AC4",
+    "text": "Given a mocked inbound route with default/business-hours/after-hours/holiday destinations, When yeastar_list_inbound_routes() is called, Then all four destination fields are present in the result",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_list_inbound_routes_maps_all_destination_fields"]
+  },
+  {
+    "id": "TC-YST-006",
+    "ac": "AC4",
+    "text": "Given a mocked outbound route list, When yeastar_list_outbound_routes() is called, Then the route fields are returned unmodified in shape",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_list_outbound_routes_passthrough_shape"]
+  },
+  {
+    "id": "TC-YST-007",
+    "ac": "AC4",
+    "text": "Given a mocked IVR list, When yeastar_list_ivrs() is called, Then the IVR entries are returned",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_list_ivrs_returns_entries"]
+  },
+  {
+    "id": "TC-YST-008",
+    "ac": "AC5",
+    "text": "Given a mocked CDR response, When yeastar_list_cdr() is called with no arguments, Then the upstream call used sort_by=time&order_by=desc and the result paginates the same way as the other list tools",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_list_cdr_defaults_to_time_desc_and_paginates"]
+  },
+  {
+    "id": "TC-YST-009",
+    "ac": "AC5",
+    "type": "manual",
+    "text": "Given the built tool description for yeastar_list_cdr, When it is read, Then it states there is no server-side time-range filter and that callers should page through time-sorted results",
+    "steps": [
+      "Run `tools/list` locally with placeholder headers",
+      "Read the `description` field of yeastar_list_cdr"
+    ],
+    "expect": "Description text explicitly says there is no start/end time filter and recommends paging through time-sorted (desc) results to narrow a window",
+    "result": "pass",
+    "evidence": "Live tools/list call (2026-11-04, local server + placeholder headers) returned for yeastar_list_cdr: description = \"List call detail records (CDR) from this PBX, newest first by default. The PBX has no server-side time-range filter: to look at a specific window, page through these time-sorted results and stop once the `time` field falls outside the window you care about.\" -- matches expect."
+  },
+  {
+    "id": "TC-YST-010",
+    "ac": "AC6",
+    "text": "Given a request missing only X-Yeastar-Client-Secret, When any tool is called, Then the server returns 401 and the body names exactly that header",
+    "type": "auto",
+    "tests": ["tests/test_middleware.py::test_missing_one_header_returns_401_naming_it"]
+  },
+  {
+    "id": "TC-YST-011",
+    "ac": "AC6",
+    "text": "Given a request missing all three required headers, When any tool is called, Then the server returns 401 and the body names all three",
+    "type": "auto",
+    "tests": ["tests/test_middleware.py::test_missing_all_three_headers_returns_401_naming_it"]
+  },
+  {
+    "id": "TC-YST-012",
+    "ac": "AC7",
+    "text": "Given a mocked get_token response with errcode 10005 (ACCESS DENIED), When any tool is called, Then it returns {\"error\":{\"code\":\"unauthorized\",\"retryable\":false}}",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_bad_credentials_map_to_unauthorized"]
+  },
+  {
+    "id": "TC-YST-013",
+    "ac": "AC7",
+    "text": "Given a mocked data call returning errcode 10004 once, then a fresh token exchange and a retried data call returning errcode 0, When a tool is called, Then it succeeds and exactly one retry was performed",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_expired_token_mid_call_retries_once_and_succeeds"]
+  },
+  {
+    "id": "TC-YST-014",
+    "ac": "AC7",
+    "text": "Given a mocked data call returning errcode 10004 on both the original attempt and the one retry, When a tool is called, Then it returns unauthorized and the upstream was called exactly twice (no infinite loop)",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_expired_token_twice_stops_after_one_retry"]
+  },
+  {
+    "id": "TC-YST-015",
+    "ac": "AC8",
+    "text": "Given a mocked connection timeout to the PBX, When a tool is called, Then it returns {\"error\":{\"code\":\"upstream_error\",\"retryable\":true}} and the message contains neither the client secret nor any access token from the test fixtures",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_timeout_maps_to_upstream_error_without_leaking_secrets"]
+  },
+  {
+    "id": "TC-YST-016",
+    "ac": "AC8",
+    "text": "Given a mocked unrecognized errcode (99999), When a tool is called, Then it maps to upstream_error without raising an unhandled exception",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_unknown_errcode_maps_to_upstream_error"]
+  },
+  {
+    "id": "TC-YST-017",
+    "ac": "AC9",
+    "text": "Given two concurrent simulated requests carrying different base_url/client_id/client_secret header sets, When both are in flight at once, Then neither request's credentials or result data appear in the other's ContextVar scope, result, or logs",
+    "type": "auto",
+    "tests": ["tests/test_middleware.py::test_concurrent_requests_do_not_leak_context"]
+  },
+  {
+    "id": "TC-YST-018",
+    "ac": "AC10",
+    "text": "Given a PBX with 0 trunks configured, When yeastar_list_trunks() is called, Then it returns items: [] and has_more: false, not an error",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_list_trunks_empty_is_not_an_error"]
+  },
+  {
+    "id": "TC-YST-019",
+    "ac": "AC1",
+    "type": "manual",
+    "text": "Given a real Yeastar P-Series appliance and real credentials, When initialize -> tools/list -> tools/call is run for each of the 6 tools, Then the real response field names match what this design assumed from the public docs",
+    "steps": [
+      "Obtain a real P550/P560/P570 appliance (or vendor-provided test instance) with the API feature enabled and a Client ID/Secret issued",
+      "Run initialize, then tools/list, then tools/call for each of the 6 tools with real headers",
+      "Compare each tool's actual response fields against this design's Data & API contract table"
+    ],
+    "expect": "Field names and shapes match; any mismatch is filed as a follow-up before the tool is relied on in production",
+    "result": "blocked",
+    "evidence": "needs a real vendor account — not available to DEV01; per SOP this does not block development or the INT publish"
+  }
+]
