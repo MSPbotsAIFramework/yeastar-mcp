@@ -100,3 +100,60 @@ Round 1, must-fix 1 (`src/yeastar_mcp/api_client.py:82-87` retry/mapping) — fi
   `KeyError` on a malformed success body) are unchanged — they were marked non-blocking in round 1 and are
   not part of this round's must-fix list, so per the review-rework rule only the must-fix item above was
   addressed.
+
+## Round 2 · 2026-11-04 · reviewed 9180e3a (base f9e9cb6)
+
+Verdict: approved
+
+### Scope
+
+`git diff 030854e...9180e3a` on `MSPbotsAIFramework/yeastar-mcp` (the round 1 must-fix fix; `docs/tickets/PRD-21279-review.md`,
+`src/yeastar_mcp/api_client.py`, `tests/test_api_client.py` — 3 files, 230 insertions / 14 deletions). Base
+re-checked: `origin/main` force-refetched, still at `f9e9cb6` (single-commit repo, nothing else merged since
+round 1), so no re-sync was needed. Gates re-run independently on this host (a fresh host without `uv`
+installed; installed `uv 0.13.7` via the official installer, then `uv sync`): `uv run pytest -q` → `23
+passed`; `uv run mypy src` → `Success: no issues found in 11 source files` — both match the `[DEV]` stub and
+the Round 1 Fixes note exactly. Full-repo CJK scan (`grep -rnP '[\x{4e00}-\x{9fff}]' --exclude-dir=.git
+--exclude-dir=.venv .`) found no CJK under `src/` or `tests/` (confirms the dev's own `src tests`-scoped scan
+from the Fixes note); it did surface the pre-existing Chinese quotations of the SOP text in this doc's own
+Round 1 section (lines 20-21, 34-35) — see Suggestion 1 below, not a new must-fix since it predates this
+round's diff. README and `Dockerfile` are untouched this round (already verified byte-identical / building in
+round 1) so not re-checked.
+
+### Findings
+
+No new must-fix in this round's diff.
+
+#### Round 1 must-fix verification
+
+1. `src/yeastar_mcp/api_client.py:82-87` (original line numbers) retry/mapping — **confirmed fixed**. Read
+   the full `_request()` implementation (now `api_client.py:96-144`): on HTTP `429` or `>= 500` it retries up
+   to `MAX_RETRY_ATTEMPTS = 3` times (4 attempts total, worst case) with exponential backoff
+   (`INITIAL_BACKOFF_SECONDS = 1.0`, `BACKOFF_MULTIPLIER = 2.0`), honors a numeric `Retry-After` header
+   (falls back to backoff for non-numeric values such as an HTTP-date), and bounds total wall time at
+   `MAX_TOTAL_WALL_TIME = 120.0`s via a `time.monotonic()` start mark with the sleep clamped to the
+   remaining budget on every iteration. A terminal `429` (retries exhausted or budget used up) now raises
+   `YeastarApiError(code="rate_limited", retryable=True)`, matching the SOP §4.2 vocabulary table exactly; a
+   terminal `>= 500` keeps `upstream_error`/`retryable=True`; other `4xx` are unchanged (not retried,
+   `upstream_error`/`retryable=False`). `tests/test_api_client.py` (6 new cases, `respx`-mocked,
+   `asyncio.sleep` monkeypatched to a no-op) independently exercise: `429` retried then succeeds; `429`
+   exhausted → `rate_limited`/`retryable=True` after exactly `1 + MAX_RETRY_ATTEMPTS` calls; `503` retried
+   then succeeds; `5xx` exhausted → `upstream_error`/`retryable=True`; a numeric `Retry-After` header honored
+   over the default backoff; a plain `404` not retried. Verified by reading the implementation and the tests
+   line by line, and independently re-running the gates (see Scope) — numbers match the Fixes note exactly.
+
+### Suggestions
+
+1. `docs/tickets/PRD-21279-review.md:20-21,34-35` (Round 1 section, predates this round's diff) — quotes the
+   SOP's original Chinese wording ("网络健壮性", "对 429 和 5xx 做有限次重试...") for citation precision. The
+   MCP track's review-doc convention is English-only (`mcp-track.md` §4.3) and the repo-wide CJK scan
+   (`mcp-track.md` §3.2 step 7) isn't scoped to exclude `docs/`. Low priority and not blocking this round:
+   it's inside an already-superseded review round's text, not the connector's served surface (README, code,
+   error messages — all clean), and carries no behavioral or acceptance risk. Flagging for whoever next
+   touches this file; not bouncing this round over it.
+2. Carried over from Round 1, still open and still non-blocking: dropped `sort_by`/`order_by` params on
+   `yeastar_list_extensions`/`yeastar_list_trunks` vs. the design table in `docs/tickets/PRD-21279.md`;
+   `get_token` (`api_client.py:146`) raising `KeyError` on a malformed success body instead of a structured
+   `upstream_error`.
+
+Status: frozen @ 9180e3a
